@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Sleep" />
+  <meta name="theme-color" content="#05060c" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <title>Sleep Song</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="stars" aria-hidden="true"></div>
+
+  <!-- ============== SETUP WIZARD ============== -->
+  <main id="setup" class="screen hidden">
+    <header class="brand">
+      <div class="moon" aria-hidden="true"></div>
+      <h1>Sleep Song</h1>
+      <p class="tagline">Set up your one-tap lullaby</p>
+    </header>
+
+    <!-- Step 1: redirect URI -->
+    <section class="step" data-step="1">
+      <div class="step-num">Step 1 of 3</div>
+      <h2>Register the redirect URI</h2>
+      <p>
+        Open your
+        <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify dashboard</a>,
+        edit the app with this client ID, and add the URI below to <em>Redirect URIs</em>.
+      </p>
+      <div class="copybox">
+        <code id="redirect-uri">—</code>
+        <button id="copy-redirect" class="ghost-btn" type="button">Copy</button>
+      </div>
+      <p class="muted">Client ID: <code>be0930de575a43c6a42c1c2f14fe8223</code></p>
+      <button id="step1-done" class="primary-btn" type="button">I added it →</button>
+    </section>
+
+    <!-- Step 2: connect Spotify -->
+    <section class="step hidden" data-step="2">
+      <div class="step-num">Step 2 of 3</div>
+      <h2>Connect Spotify</h2>
+      <p>You'll be redirected to Spotify to authorize playback control.</p>
+      <button id="connect-spotify" class="primary-btn" type="button">Connect Spotify</button>
+    </section>
+
+    <!-- Step 3: pick Sonos device -->
+    <section class="step hidden" data-step="3">
+      <div class="step-num">Step 3 of 3</div>
+      <h2>Pick your Sonos speaker</h2>
+      <p class="muted">Make sure your Sonos is on and signed in to Spotify so it appears as a Spotify Connect device.</p>
+      <div id="device-list" class="device-list" aria-live="polite">
+        <div class="loading">Loading devices…</div>
+      </div>
+      <button id="refresh-devices" class="ghost-btn" type="button">Refresh list</button>
+    </section>
+
+    <p id="setup-error" class="error hidden"></p>
+  </main>
+
+  <!-- ============== MAIN SCREEN ============== -->
+  <main id="main" class="screen hidden">
+    <div class="device-pill" id="device-pill">—</div>
+
+    <button id="tap" class="tap" type="button" aria-label="Play sleep song">
+      <span class="tap-ring"></span>
+      <span class="tap-ring tap-ring-2"></span>
+      <span class="tap-core">
+        <svg id="icon-play" class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5v14l11-7z" fill="currentColor"/>
+        </svg>
+        <svg id="icon-pause" class="icon hidden" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+          <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+        </svg>
+        <svg id="icon-spin" class="icon hidden spin" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40 20" stroke-linecap="round"/>
+        </svg>
+      </span>
+    </button>
+
+    <div class="status" id="status">tap to play</div>
+
+    <footer class="footer">
+      <button id="change-device" class="link-btn" type="button">change speaker</button>
+      <span class="dot">·</span>
+      <button id="reset-app" class="link-btn" type="button">reset</button>
+    </footer>
+
+    <p id="main-error" class="error hidden"></p>
+  </main>
+
+  <!-- ============== CALLBACK / LOADING ============== -->
+  <main id="loader" class="screen">
+    <div class="moon big" aria-hidden="true"></div>
+    <p class="loading">…</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
