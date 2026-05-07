@@ -8,7 +8,7 @@
   'use strict';
 
   // ---------- Config ----------
-  const CLIENT_ID  = 'be0930de575a43c6a42c1c2f14fe8223';
+  const CLIENT_ID  = '03f28a9a95cd414e8ccdad845f50dbe4';
   const TRACK_URI  = 'spotify:track:3HC9bA5wmZsz0wtrCIt3I6';
   const TRACK_ID   = TRACK_URI.split(':').pop();
   const SCOPES     = [

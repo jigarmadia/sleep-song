@@ -12,7 +12,7 @@ the Sonos app once).
 
 1. **Setup wizard** (first launch)
    - Step 1: Copy the page's URL and paste it as a Redirect URI in the
-     Spotify dashboard for client `be0930de575a43c6a42c1c2f14fe8223`.
+     Spotify dashboard for client `03f28a9a95cd414e8ccdad845f50dbe4`.
    - Step 2: PKCE login.
    - Step 3: Pick a Sonos speaker from `GET /me/player/devices`.
 2. **Main screen**: one big tap target. Tap once to play
