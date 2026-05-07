@@ -368,13 +368,31 @@
     const dev = currentDevice();
     if (!dev) throw new Error('no device selected');
 
-    // Start playback of the specific track on the chosen device.
-    // Including device_id on /play also transfers playback to that device.
+    // 1. Transfer playback to the saved device WITHOUT starting it.
+    //    This is necessary because if another phone/app currently has an
+    //    active Connect session, calling /me/player/play with device_id alone
+    //    can play on the active device instead of the one we want. Doing the
+    //    transfer first forces the Sonos to become the active target.
+    try {
+      await spotify('PUT', '/me/player', {
+        body: { device_ids: [dev.id], play: false },
+      });
+    } catch (e) {
+      // 404 NO_ACTIVE_DEVICE here means there's no current session at all,
+      // which is fine — /play will start one. Re-throw anything else.
+      if (e.status !== 404) throw e;
+    }
+
+    // 2. Tiny delay so Spotify registers the transfer before /play arrives.
+    await new Promise((r) => setTimeout(r, 700));
+
+    // 3. Start playback of the specific track on that device.
     await spotify('PUT', '/me/player/play', {
       query: { device_id: dev.id },
       body:  { uris: [TRACK_URI] },
     });
-    // Set repeat to track. Best-effort — don't fail the play if this errors.
+
+    // 4. Set repeat to track. Best-effort — don't fail the play if this errors.
     try {
       await spotify('PUT', '/me/player/repeat', {
         query: { state: 'track', device_id: dev.id },
