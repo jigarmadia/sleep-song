@@ -1,0 +1,10 @@
+{
+  "name": "sleep-song-token",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker that holds the Sonos OAuth client_secret and proxies the Sonos token exchange.",
+  "scripts": {
+    "dev":    "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}

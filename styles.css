@@ -103,6 +103,15 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; f
   box-shadow: 0 6px 30px rgba(0,0,0,0.3);
 }
 .step h2 { margin: 6px 0 10px; font-size: 20px; font-weight: 600; }
+
+/* Header row with action button on the right (used in steps 3 & 4 so the
+   refresh control is always visible at the top of the card). */
+.row-between {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 4px;
+}
+.row-between h2 { margin: 0; }
+
 .step p { margin: 0 0 14px; line-height: 1.5; color: #c2c6d6; font-size: 15px; }
 .step .step-num {
   font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase;

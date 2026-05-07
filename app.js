@@ -1,110 +1,108 @@
 /* ==========================================================================
-   sleep-song
-   Pure client-side Spotify PKCE → play one track on a Sonos (Spotify Connect)
-   speaker in one tap, with track-repeat. No backend.
+   sleep-song — Sonos edition
+   Single-tap play of a saved Sonos Favorite (one-track Spotify favorite),
+   on infinite repeat. Talks to the Sonos Cloud Control API directly, so
+   the speaker doesn't need to be an active Spotify Connect target — works
+   even if the Sonos has been idle for hours.
+
+   Auth: Sonos OAuth authorization-code grant. Token-exchange (which needs
+   the client_secret) is proxied through a tiny Cloudflare Worker; the
+   browser never sees the secret.
    ========================================================================== */
 
 (() => {
   'use strict';
 
-  // ---------- Config ----------
-  const CLIENT_ID  = '03f28a9a95cd414e8ccdad845f50dbe4';
-  const TRACK_URI  = 'spotify:track:3HC9bA5wmZsz0wtrCIt3I6';
-  const TRACK_ID   = TRACK_URI.split(':').pop();
-  const SCOPES     = [
-    'user-read-playback-state',
-    'user-modify-playback-state',
-    'user-read-currently-playing',
-  ].join(' ');
+  // ---------- Config (filled in once Sonos integration + Worker exist) ----------
+  // Public Sonos integration "Key". Safe to commit. Set when you create the
+  // integration at https://developer.sonos.com/.
+  const SONOS_CLIENT_ID = '__SONOS_CLIENT_ID__';
 
-  // Always derive the redirect URI from the page's own URL (without query/hash).
-  // This is what we ask the user to register in their Spotify dashboard.
+  // The Cloudflare Worker URL deployed from /worker. Looks like
+  // https://sleep-song-token.<your-subdomain>.workers.dev
+  const WORKER_URL = '__WORKER_URL__';
+
+  // The track we want to wake up to. Stored only in setup notes / README;
+  // the actual playback target is the Sonos Favorite the user has saved
+  // for this track (Sonos API plays containers/favorites, not raw URIs).
+  const TRACK_URI = 'spotify:track:3HC9bA5wmZsz0wtrCIt3I6';
+
+  const SONOS_SCOPES   = 'playback-control-all';
+  const SONOS_AUTH_URL = 'https://api.sonos.com/login/v3/oauth';
+  const SONOS_API      = 'https://api.ws.sonos.com/control/api/v1';
+
+  // Always derive redirect URI from the page URL so the same code works
+  // for any deploy target (local file, Pages, custom domain).
   const REDIRECT_URI = (() => {
     const u = new URL(window.location.href);
-    u.search = '';
-    u.hash = '';
-    // Spotify requires an exact match. Trailing-slash sensitive.
+    u.search = ''; u.hash = '';
     return u.toString();
   })();
 
-  const AUTH_URL  = 'https://accounts.spotify.com/authorize';
-  const TOKEN_URL = 'https://accounts.spotify.com/api/token';
-  const API       = 'https://api.spotify.com/v1';
-
+  // ---------- Storage keys ----------
   const LS = {
-    tokens:    'ss.tokens',     // { access_token, refresh_token, expires_at }
-    device:    'ss.device',     // { id, name, type }
-    setupDone: 'ss.setupDone',  // '1' once redirect URI step acked
-    verifier:  'ss.pkce.v',     // PKCE code verifier (transient)
-    authState: 'ss.pkce.s',     // PKCE state (transient)
+    setupDone: 'ss.setupDone',          // '1' once the redirect URI step is acked
+    tokens:    'ss.sonos.tokens',       // { access_token, refresh_token, expires_at }
+    household: 'ss.sonos.household',    // { id }
+    group:     'ss.sonos.group',        // { id, name }
+    favorite:  'ss.sonos.favorite',     // { id, name }
+    authState: 'ss.sonos.authState',    // transient OAuth state (sessionStorage)
   };
 
   // ---------- DOM helpers ----------
-  const $ = (sel) => document.querySelector(sel);
-  const show = (el) => el && el.classList.remove('hidden');
-  const hide = (el) => el && el.classList.add('hidden');
+  const $    = (sel) => document.querySelector(sel);
+  const $$   = (sel) => Array.from(document.querySelectorAll(sel));
+  const show = (el)  => el && el.classList.remove('hidden');
+  const hide = (el)  => el && el.classList.add('hidden');
 
-  // ---------- PKCE ----------
-  function randomString(len = 64) {
-    const arr = new Uint8Array(len);
-    crypto.getRandomValues(arr);
-    return [...arr].map(b => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[b % 62]).join('');
-  }
-  async function sha256(input) {
-    const data = new TextEncoder().encode(input);
-    return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
-  }
-  function base64url(bytes) {
-    let s = btoa(String.fromCharCode(...bytes));
-    return s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-  async function challenge(verifier) {
-    return base64url(await sha256(verifier));
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
   }
 
-  // ---------- Token storage / refresh ----------
-  function loadTokens() {
-    try { return JSON.parse(localStorage.getItem(LS.tokens) || 'null'); }
-    catch { return null; }
-  }
-  function saveTokens(t) {
-    localStorage.setItem(LS.tokens, JSON.stringify(t));
-  }
-  function clearTokens() {
-    localStorage.removeItem(LS.tokens);
-  }
+  // ---------- Tokens ----------
+  function loadTokens()   { try { return JSON.parse(localStorage.getItem(LS.tokens) || 'null'); } catch { return null; } }
+  function saveTokens(t)  { localStorage.setItem(LS.tokens, JSON.stringify(t)); }
+  function clearTokens()  { localStorage.removeItem(LS.tokens); }
 
   let refreshTimer = null;
   function scheduleRefresh(tokens) {
     if (refreshTimer) clearTimeout(refreshTimer);
     if (!tokens || !tokens.expires_at) return;
-    // Refresh 60s before expiry, with min 5s.
-    const ms = Math.max(5_000, tokens.expires_at - Date.now() - 60_000);
+    // Refresh 2 minutes before expiry; never sooner than 5 s.
+    const ms = Math.max(5_000, tokens.expires_at - Date.now() - 120_000);
     refreshTimer = setTimeout(() => { refreshAccessToken().catch(() => {}); }, ms);
   }
 
-  async function exchangeCodeForTokens(code, verifier) {
-    const body = new URLSearchParams({
-      grant_type:    'authorization_code',
-      code,
-      redirect_uri:  REDIRECT_URI,
-      client_id:     CLIENT_ID,
-      code_verifier: verifier,
-    });
-    const res = await fetch(TOKEN_URL, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`token exchange failed: ${res.status} ${txt}`);
+  async function workerExchange(payload) {
+    if (!WORKER_URL || WORKER_URL.startsWith('__')) {
+      throw new Error('Worker URL not configured. Edit app.js: WORKER_URL.');
     }
-    const j = await res.json();
+    const res = await fetch(`${WORKER_URL}/token`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!res.ok) {
+      const msg = (data && (data.error_description || data.error || data.detail)) || text || res.statusText;
+      throw new Error(`token endpoint ${res.status}: ${msg}`);
+    }
+    return data;
+  }
+
+  async function exchangeCodeForTokens(code) {
+    const j = await workerExchange({
+      grant_type:   'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+    });
     const tokens = {
       access_token:  j.access_token,
       refresh_token: j.refresh_token,
-      expires_at:    Date.now() + (j.expires_in * 1000),
+      expires_at:    Date.now() + ((j.expires_in || 86400) * 1000),
     };
     saveTokens(tokens);
     scheduleRefresh(tokens);
@@ -114,28 +112,21 @@
   async function refreshAccessToken() {
     const tokens = loadTokens();
     if (!tokens || !tokens.refresh_token) throw new Error('no refresh token');
-    const body = new URLSearchParams({
-      grant_type:    'refresh_token',
-      refresh_token: tokens.refresh_token,
-      client_id:     CLIENT_ID,
-    });
-    const res = await fetch(TOKEN_URL, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      // If the refresh token is invalid, force re-auth.
-      if (res.status === 400 || res.status === 401) clearTokens();
-      throw new Error(`refresh failed: ${res.status} ${txt}`);
+    let j;
+    try {
+      j = await workerExchange({
+        grant_type:    'refresh_token',
+        refresh_token: tokens.refresh_token,
+      });
+    } catch (e) {
+      // If refresh fails permanently, force re-auth.
+      if (/\b(400|401)\b/.test(e.message)) clearTokens();
+      throw e;
     }
-    const j = await res.json();
     const updated = {
       access_token:  j.access_token,
-      // Spotify may rotate the refresh token; keep the new one if provided.
       refresh_token: j.refresh_token || tokens.refresh_token,
-      expires_at:    Date.now() + (j.expires_in * 1000),
+      expires_at:    Date.now() + ((j.expires_in || 86400) * 1000),
     };
     saveTokens(updated);
     scheduleRefresh(updated);
@@ -151,13 +142,9 @@
     return tokens.access_token;
   }
 
-  // ---------- Spotify API ----------
-  async function spotify(method, path, { query, body, retry = true } = {}) {
+  // ---------- Sonos API ----------
+  async function sonos(method, path, { body, retry = true } = {}) {
     const token = await getValidToken();
-    const url = new URL(API + path);
-    if (query) for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined && v !== null) url.searchParams.set(k, v);
-    }
     const init = {
       method,
       headers: { 'Authorization': `Bearer ${token}` },
@@ -166,155 +153,192 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    const res = await fetch(url.toString(), init);
+    const res = await fetch(SONOS_API + path, init);
     if (res.status === 401 && retry) {
-      // Token may have been revoked or rotated; try one refresh + retry.
       try { await refreshAccessToken(); }
       catch { clearTokens(); throw new Error('session expired'); }
-      return spotify(method, path, { query, body, retry: false });
+      return sonos(method, path, { body, retry: false });
     }
-    if (res.status === 204) return null;
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     if (!res.ok) {
-      const msg = (data && data.error && data.error.message) || text || res.statusText;
+      const msg = (data && (data.errorCode || data.reason || data.message)) || text || res.statusText;
       const err = new Error(`${res.status} ${msg}`);
       err.status = res.status;
+      err.data   = data;
       throw err;
     }
     return data;
   }
 
-  // ---------- Auth flow ----------
-  async function startLogin() {
-    const verifier = randomString(64);
-    const state    = randomString(16);
-    sessionStorage.setItem(LS.verifier,  verifier);
-    sessionStorage.setItem(LS.authState, state);
-    const codeChallenge = await challenge(verifier);
-    const params = new URLSearchParams({
-      client_id:             CLIENT_ID,
-      response_type:         'code',
-      redirect_uri:          REDIRECT_URI,
-      code_challenge_method: 'S256',
-      code_challenge:        codeChallenge,
-      state,
-      scope:                 SCOPES,
+  async function listHouseholds()                  { return sonos('GET', `/households`); }
+  async function listGroups(hh)                    { return sonos('GET', `/households/${encodeURIComponent(hh)}/groups`); }
+  async function listFavorites(hh)                 { return sonos('GET', `/households/${encodeURIComponent(hh)}/favorites`); }
+  async function getPlaybackStatus(groupId)        { return sonos('GET', `/groups/${encodeURIComponent(groupId)}/playback`); }
+  async function loadFavorite(groupId, favoriteId) {
+    return sonos('POST', `/groups/${encodeURIComponent(groupId)}/favorites`, {
+      body: {
+        favoriteId,
+        action: 'REPLACE',
+        playOnCompletion: true,
+        playModes: { repeat: false, repeatOne: true, shuffle: false, crossfade: false },
+      },
     });
-    window.location.assign(`${AUTH_URL}?${params.toString()}`);
+  }
+  async function pausePlayback(groupId) { return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/pause`); }
+  async function resumePlayback(groupId){ return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/play`); }
+
+  // ---------- Auth flow ----------
+  function randomString(len = 32) {
+    const arr = new Uint8Array(len);
+    crypto.getRandomValues(arr);
+    return [...arr].map((b) => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[b % 62]).join('');
+  }
+
+  function startLogin() {
+    if (!SONOS_CLIENT_ID || SONOS_CLIENT_ID.startsWith('__')) {
+      setSetupError('Sonos client ID not configured. Edit app.js: SONOS_CLIENT_ID.');
+      return;
+    }
+    const state = randomString(24);
+    sessionStorage.setItem(LS.authState, state);
+    const params = new URLSearchParams({
+      client_id:     SONOS_CLIENT_ID,
+      response_type: 'code',
+      state,
+      scope:         SONOS_SCOPES,
+      redirect_uri:  REDIRECT_URI,
+    });
+    window.location.assign(`${SONOS_AUTH_URL}?${params.toString()}`);
   }
 
   async function handleCallbackIfPresent() {
-    const url = new URL(window.location.href);
+    const url   = new URL(window.location.href);
     const code  = url.searchParams.get('code');
     const state = url.searchParams.get('state');
     const error = url.searchParams.get('error');
     if (!code && !error) return false;
 
-    // Clear query string from URL bar so refreshes don't re-trigger.
     window.history.replaceState({}, '', url.pathname);
 
     if (error) {
-      setSetupError(`Spotify auth error: ${error}`);
+      setSetupError(`Sonos auth error: ${error}`);
       return true;
     }
 
-    const expectedState = sessionStorage.getItem(LS.authState);
-    const verifier      = sessionStorage.getItem(LS.verifier);
+    const expected = sessionStorage.getItem(LS.authState);
     sessionStorage.removeItem(LS.authState);
-    sessionStorage.removeItem(LS.verifier);
-
-    if (!verifier || !expectedState || state !== expectedState) {
+    if (!expected || state !== expected) {
       setSetupError('auth state mismatch — please try again');
       return true;
     }
 
-    try {
-      await exchangeCodeForTokens(code, verifier);
-    } catch (e) {
-      setSetupError(`token exchange failed: ${e.message}`);
-      return true;
-    }
+    try { await exchangeCodeForTokens(code); }
+    catch (e) { setSetupError(`token exchange failed: ${e.message}`); return true; }
     return true;
   }
 
-  // ---------- Setup wizard ----------
+  // ---------- Wizard ----------
   function setSetupError(msg) {
     const el = $('#setup-error');
-    if (!el) return;
     if (!msg) { el.textContent = ''; hide(el); return; }
     el.textContent = msg;
     show(el);
   }
 
   function showStep(n) {
-    document.querySelectorAll('#setup .step').forEach((s) => {
+    $$('#setup .step').forEach((s) => {
       s.classList.toggle('hidden', Number(s.dataset.step) !== n);
     });
   }
 
-  function isLikelySonos(d) {
-    // Spotify Connect doesn't have a dedicated "sonos" type, but Sonos speakers
-    // typically expose themselves as "Speaker" type with "Sonos" or the room
-    // name. We badge anything that looks like a speaker / contains "sonos".
-    const name = (d.name || '').toLowerCase();
-    const type = (d.type || '').toLowerCase();
-    if (name.includes('sonos')) return true;
-    if (type === 'speaker' || type === 'avr' || type === 'stb') return true;
-    return false;
-  }
+  function loadHousehold() { try { return JSON.parse(localStorage.getItem(LS.household) || 'null'); } catch { return null; } }
+  function loadGroup()     { try { return JSON.parse(localStorage.getItem(LS.group)     || 'null'); } catch { return null; } }
+  function loadFavoriteRef(){ try { return JSON.parse(localStorage.getItem(LS.favorite) || 'null'); } catch { return null; } }
 
-  async function loadDevices() {
-    const list = $('#device-list');
-    list.innerHTML = '<div class="loading">Loading devices…</div>';
+  // Step 3: pick group (auto-detect household).
+  async function loadGroupsStep() {
+    const list = $('#group-list');
+    list.innerHTML = '<div class="loading">Loading speakers…</div>';
     setSetupError('');
-    let data;
     try {
-      data = await spotify('GET', '/me/player/devices');
+      let hh = loadHousehold();
+      if (!hh) {
+        const households = await listHouseholds();
+        const arr = (households && households.households) || [];
+        if (arr.length === 0) throw new Error('no Sonos households on this account');
+        hh = { id: arr[0].id };
+        localStorage.setItem(LS.household, JSON.stringify(hh));
+      }
+      const groupsResp = await listGroups(hh.id);
+      const groups = (groupsResp && groupsResp.groups) || [];
+      list.innerHTML = '';
+      if (groups.length === 0) {
+        list.innerHTML = `<div class="device empty">No groups in this household. Make sure your speakers are powered on.</div>`;
+        return;
+      }
+      groups.forEach((g) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'device';
+        btn.innerHTML = `
+          <div style="flex:1; min-width:0;">
+            <div class="name">${escapeHtml(g.name)}</div>
+            <div class="meta">${escapeHtml((g.playerIds || []).length + ' player(s)')}</div>
+          </div>
+          <span class="badge">group</span>`;
+        btn.addEventListener('click', () => {
+          localStorage.setItem(LS.group, JSON.stringify({ id: g.id, name: g.name }));
+          renderSetup(4);
+        });
+        list.appendChild(btn);
+      });
     } catch (e) {
       list.innerHTML = '';
-      setSetupError(`couldn't load devices: ${e.message}`);
-      return;
+      setSetupError(`couldn't load groups: ${e.message}`);
     }
-    const devices = (data && data.devices) || [];
-    if (devices.length === 0) {
-      list.innerHTML = `
-        <div class="device empty">
-          No Spotify Connect devices found. Open Spotify on your Sonos
-          (or play something briefly) and tap Refresh.
-        </div>`;
-      return;
-    }
-    // Sort: likely-Sonos / speakers first.
-    devices.sort((a, b) => Number(isLikelySonos(b)) - Number(isLikelySonos(a)));
-    list.innerHTML = '';
-    devices.forEach((d) => {
-      const sonosish = isLikelySonos(d);
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'device';
-      btn.innerHTML = `
-        <div style="flex:1; min-width:0;">
-          <div class="name">${escapeHtml(d.name)}</div>
-          <div class="meta">${escapeHtml(d.type || 'device')}${d.is_active ? ' · active' : ''}</div>
-        </div>
-        <span class="badge ${sonosish ? '' : 'other'}">${sonosish ? 'speaker' : d.type || ''}</span>
-      `;
-      btn.addEventListener('click', () => {
-        localStorage.setItem(LS.device, JSON.stringify({
-          id: d.id, name: d.name, type: d.type,
-        }));
-        renderMain();
-      });
-      list.appendChild(btn);
-    });
   }
 
-  function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
+  // Step 4: pick favorite.
+  async function loadFavoritesStep() {
+    const list = $('#favorite-list');
+    list.innerHTML = '<div class="loading">Loading your Sonos Favorites…</div>';
+    setSetupError('');
+    try {
+      const hh = loadHousehold();
+      if (!hh) { renderSetup(3); return; }
+      const resp = await listFavorites(hh.id);
+      const favs = (resp && resp.items) || [];
+      list.innerHTML = '';
+      if (favs.length === 0) {
+        list.innerHTML = `
+          <div class="device empty">
+            No Sonos Favorites yet. In the Sonos app, find your sleep song,
+            long-press it and choose <em>Add to Sonos Favorites</em>, then tap Refresh.
+          </div>`;
+        return;
+      }
+      favs.forEach((f) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'device';
+        btn.innerHTML = `
+          <div style="flex:1; min-width:0;">
+            <div class="name">${escapeHtml(f.name || 'Untitled favorite')}</div>
+            <div class="meta">${escapeHtml(f.description || (f.service && f.service.name) || 'favorite')}</div>
+          </div>
+          <span class="badge">favorite</span>`;
+        btn.addEventListener('click', () => {
+          localStorage.setItem(LS.favorite, JSON.stringify({ id: f.id, name: f.name }));
+          renderMain();
+        });
+        list.appendChild(btn);
+      });
+    } catch (e) {
+      list.innerHTML = '';
+      setSetupError(`couldn't load favorites: ${e.message}`);
+    }
   }
 
   // ---------- Main screen ----------
@@ -329,9 +353,9 @@
   }
 
   function setIcon(which) {
-    const icons = { play: '#icon-play', pause: '#icon-pause', spin: '#icon-spin' };
-    Object.values(icons).forEach((sel) => hide($(sel)));
-    show($(icons[which]));
+    const map = { play: '#icon-play', pause: '#icon-pause', spin: '#icon-spin' };
+    Object.values(map).forEach((sel) => hide($(sel)));
+    show($(map[which]));
   }
 
   function setPlayingUI(playing) {
@@ -343,74 +367,33 @@
     $('#status').textContent = playing ? 'playing · loops forever' : 'tap to play';
   }
 
-  async function syncStateFromSpotify() {
+  async function syncStateFromSonos() {
+    const g = loadGroup();
+    if (!g) { setPlayingUI(false); return; }
     try {
-      const state = await spotify('GET', '/me/player');
-      if (!state || !state.item) { setPlayingUI(false); return; }
-      const sameTrack  = state.item.id === TRACK_ID;
-      const sameDevice = state.device && state.device.id === currentDeviceId();
-      setPlayingUI(Boolean(state.is_playing && sameTrack && sameDevice));
+      const status = await getPlaybackStatus(g.id);
+      const state = status && status.playbackState;
+      setPlayingUI(state === 'PLAYBACK_STATE_PLAYING' || state === 'PLAYBACK_STATE_BUFFERING');
     } catch {
       setPlayingUI(false);
     }
   }
 
-  function currentDevice() {
-    try { return JSON.parse(localStorage.getItem(LS.device) || 'null'); }
-    catch { return null; }
-  }
-  function currentDeviceId() {
-    const d = currentDevice();
-    return d && d.id;
-  }
-
   async function play() {
-    const dev = currentDevice();
-    if (!dev) throw new Error('no device selected');
-
-    // 1. Transfer playback to the saved device WITHOUT starting it.
-    //    This is necessary because if another phone/app currently has an
-    //    active Connect session, calling /me/player/play with device_id alone
-    //    can play on the active device instead of the one we want. Doing the
-    //    transfer first forces the Sonos to become the active target.
-    try {
-      await spotify('PUT', '/me/player', {
-        body: { device_ids: [dev.id], play: false },
-      });
-    } catch (e) {
-      // 404 NO_ACTIVE_DEVICE here means there's no current session at all,
-      // which is fine — /play will start one. Re-throw anything else.
-      if (e.status !== 404) throw e;
-    }
-
-    // 2. Tiny delay so Spotify registers the transfer before /play arrives.
-    await new Promise((r) => setTimeout(r, 700));
-
-    // 3. Start playback of the specific track on that device.
-    await spotify('PUT', '/me/player/play', {
-      query: { device_id: dev.id },
-      body:  { uris: [TRACK_URI] },
-    });
-
-    // 4. Set repeat to track. Best-effort — don't fail the play if this errors.
-    try {
-      await spotify('PUT', '/me/player/repeat', {
-        query: { state: 'track', device_id: dev.id },
-      });
-    } catch (e) {
-      console.warn('repeat failed:', e);
-    }
+    const g = loadGroup();
+    const f = loadFavoriteRef();
+    if (!g) throw new Error('no speaker selected');
+    if (!f) throw new Error('no favorite selected');
+    await loadFavorite(g.id, f.id);
   }
 
   async function pause() {
-    const dev = currentDevice();
-    if (!dev) return;
-    try {
-      await spotify('PUT', '/me/player/pause', { query: { device_id: dev.id } });
-    } catch (e) {
-      // 403 "Player command failed: Restriction violated" can happen if
-      // already paused; swallow.
-      if (e.status !== 403 && e.status !== 404) throw e;
+    const g = loadGroup();
+    if (!g) return;
+    try { await pausePlayback(g.id); }
+    catch (e) {
+      // Sonos returns 410/409 when nothing is playing — swallow.
+      if (e.status !== 409 && e.status !== 410 && e.status !== 404) throw e;
     }
   }
 
@@ -429,12 +412,9 @@
       }
     } catch (e) {
       console.error(e);
-      // Restore previous icon state.
       setPlayingUI(isPlaying);
       let msg = e.message || 'something went wrong';
-      if (/404/.test(msg) || /NO_ACTIVE_DEVICE/i.test(msg)) {
-        msg = "device isn't reachable — open Spotify on the Sonos briefly, then tap again";
-      }
+      if (e.status === 410) msg = 'group is gone — pick a different speaker in setup';
       setMainError(msg);
     } finally {
       busy = false;
@@ -447,34 +427,31 @@
     hide($('#main')); hide($('#loader'));
     show($('#setup'));
     showStep(step);
-    if (step === 3) loadDevices();
+    if (step === 3) loadGroupsStep();
+    if (step === 4) loadFavoritesStep();
   }
 
   function renderMain() {
     hide($('#setup')); hide($('#loader'));
     show($('#main'));
-    const dev = currentDevice();
-    $('#device-pill').textContent = dev ? `▸ ${dev.name}` : 'no speaker';
+    const g = loadGroup();
+    const f = loadFavoriteRef();
+    $('#device-pill').textContent =
+      (g ? `▸ ${g.name}` : 'no speaker') + (f ? ` · ${f.name}` : '');
     setPlayingUI(false);
-    syncStateFromSpotify();
+    syncStateFromSonos();
   }
 
-  function renderLoader(msg = '…') {
-    hide($('#setup')); hide($('#main'));
-    show($('#loader'));
-    $('#loader .loading').textContent = msg;
-  }
-
-  async function decideRoute() {
-    const tokens = loadTokens();
+  function decideRoute() {
+    const tokens     = loadTokens();
+    const setupDone  = localStorage.getItem(LS.setupDone) === '1';
+    const group      = loadGroup();
+    const favorite   = loadFavoriteRef();
     if (tokens) scheduleRefresh(tokens);
-
-    const dev = currentDevice();
-    const setupDone = localStorage.getItem(LS.setupDone) === '1';
-
-    if (!setupDone)             return renderSetup(1);
-    if (!tokens)                return renderSetup(2);
-    if (!dev)                   return renderSetup(3);
+    if (!setupDone)        return renderSetup(1);
+    if (!tokens)           return renderSetup(2);
+    if (!group)            return renderSetup(3);
+    if (!favorite)         return renderSetup(4);
     return renderMain();
   }
 
@@ -489,7 +466,6 @@
         b.textContent = 'Copied!';
         setTimeout(() => (b.textContent = prev), 1200);
       } catch {
-        // Fallback: select the code text.
         const range = document.createRange();
         range.selectNodeContents($('#redirect-uri'));
         const sel = window.getSelection();
@@ -502,30 +478,36 @@
     });
 
     // Step 2
-    $('#connect-spotify').addEventListener('click', () => {
-      startLogin().catch((e) => setSetupError(e.message));
+    $('#connect-sonos').addEventListener('click', () => {
+      try { startLogin(); }
+      catch (e) { setSetupError(e.message); }
     });
 
     // Step 3
-    $('#refresh-devices').addEventListener('click', loadDevices);
+    $('#refresh-groups').addEventListener('click', loadGroupsStep);
+
+    // Step 4
+    $('#refresh-favorites').addEventListener('click', loadFavoritesStep);
 
     // Main
     $('#tap').addEventListener('click', onTap);
-    $('#change-device').addEventListener('click', () => {
-      localStorage.removeItem(LS.device);
+    $('#change-speaker').addEventListener('click', () => {
+      localStorage.removeItem(LS.group);
       renderSetup(3);
     });
+    $('#change-favorite').addEventListener('click', () => {
+      localStorage.removeItem(LS.favorite);
+      renderSetup(4);
+    });
     $('#reset-app').addEventListener('click', () => {
-      if (!confirm('Reset Sleep Song? You will need to reconnect Spotify.')) return;
-      [LS.tokens, LS.device, LS.setupDone].forEach((k) => localStorage.removeItem(k));
+      if (!confirm('Reset Sleep Song? You will need to reconnect Sonos.')) return;
+      Object.values(LS).forEach((k) => localStorage.removeItem(k));
+      sessionStorage.clear();
       window.location.reload();
     });
 
-    // Re-sync when returning to the tab.
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && loadTokens() && currentDevice()) {
-        syncStateFromSpotify();
-      }
+      if (!document.hidden && loadTokens() && loadGroup()) syncStateFromSonos();
     });
   }
 
@@ -535,10 +517,9 @@
     try {
       const handled = await handleCallbackIfPresent();
       if (handled && loadTokens()) {
-        // Auth just completed → if setup was done and we have a device, go straight to main.
-        const dev = currentDevice();
-        if (dev) return renderMain();
-        return renderSetup(3);
+        if (!loadGroup()) return renderSetup(3);
+        if (!loadFavoriteRef()) return renderSetup(4);
+        return renderMain();
       }
     } catch (e) {
       console.error(e);

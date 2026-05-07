@@ -27,38 +27,53 @@
 
     <!-- Step 1: redirect URI -->
     <section class="step" data-step="1">
-      <div class="step-num">Step 1 of 3</div>
+      <div class="step-num">Step 1 of 4</div>
       <h2>Register the redirect URI</h2>
       <p>
         Open your
-        <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify dashboard</a>,
-        edit the app with this client ID, and add the URI below to <em>Redirect URIs</em>.
+        <a href="https://developer.sonos.com/" target="_blank" rel="noopener">Sonos developer portal</a>,
+        edit your integration, and add the URI below to <em>Redirect URIs</em>.
       </p>
       <div class="copybox">
         <code id="redirect-uri">—</code>
         <button id="copy-redirect" class="ghost-btn" type="button">Copy</button>
       </div>
-      <p class="muted">Client ID: <code>03f28a9a95cd414e8ccdad845f50dbe4</code></p>
+      <p class="muted">You'll also need to have created a Sonos integration and saved the track as a Sonos Favorite in the Sonos app.</p>
       <button id="step1-done" class="primary-btn" type="button">I added it →</button>
     </section>
 
-    <!-- Step 2: connect Spotify -->
+    <!-- Step 2: connect Sonos -->
     <section class="step hidden" data-step="2">
-      <div class="step-num">Step 2 of 3</div>
-      <h2>Connect Spotify</h2>
-      <p>You'll be redirected to Spotify to authorize playback control.</p>
-      <button id="connect-spotify" class="primary-btn" type="button">Connect Spotify</button>
+      <div class="step-num">Step 2 of 4</div>
+      <h2>Connect Sonos</h2>
+      <p>You'll be redirected to Sonos to authorize playback control.</p>
+      <button id="connect-sonos" class="primary-btn" type="button">Connect Sonos</button>
     </section>
 
-    <!-- Step 3: pick Sonos device -->
+    <!-- Step 3: pick group -->
     <section class="step hidden" data-step="3">
-      <div class="step-num">Step 3 of 3</div>
-      <h2>Pick your Sonos speaker</h2>
-      <p class="muted">Make sure your Sonos is on and signed in to Spotify so it appears as a Spotify Connect device.</p>
-      <div id="device-list" class="device-list" aria-live="polite">
-        <div class="loading">Loading devices…</div>
+      <div class="step-num">Step 3 of 4</div>
+      <div class="row-between">
+        <h2>Pick your speaker</h2>
+        <button id="refresh-groups" class="ghost-btn" type="button">↻ Refresh</button>
       </div>
-      <button id="refresh-devices" class="ghost-btn" type="button">Refresh list</button>
+      <p class="muted">A Sonos "group" is one or more speakers playing together. Pick the group your sleep song should play on.</p>
+      <div id="group-list" class="device-list" aria-live="polite">
+        <div class="loading">Loading speakers…</div>
+      </div>
+    </section>
+
+    <!-- Step 4: pick favorite -->
+    <section class="step hidden" data-step="4">
+      <div class="step-num">Step 4 of 4</div>
+      <div class="row-between">
+        <h2>Pick the song</h2>
+        <button id="refresh-favorites" class="ghost-btn" type="button">↻ Refresh</button>
+      </div>
+      <p class="muted">These are your <em>Sonos Favorites</em>. If yours isn't here, open the Sonos app, find the track, and choose <em>Add to Sonos Favorites</em>.</p>
+      <div id="favorite-list" class="device-list" aria-live="polite">
+        <div class="loading">Loading favorites…</div>
+      </div>
     </section>
 
     <p id="setup-error" class="error hidden"></p>
@@ -88,9 +103,11 @@
     <div class="status" id="status">tap to play</div>
 
     <footer class="footer">
-      <button id="change-device" class="link-btn" type="button">change speaker</button>
+      <button id="change-speaker"  class="link-btn" type="button">change speaker</button>
       <span class="dot">·</span>
-      <button id="reset-app" class="link-btn" type="button">reset</button>
+      <button id="change-favorite" class="link-btn" type="button">change song</button>
+      <span class="dot">·</span>
+      <button id="reset-app"       class="link-btn" type="button">reset</button>
     </footer>
 
     <p id="main-error" class="error hidden"></p>
