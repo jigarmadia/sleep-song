@@ -1,0 +1,12 @@
+name = "sleep-song-token"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Secrets are NOT defined here. Set them after deploy:
+#   wrangler secret put SONOS_CLIENT_ID
+#   wrangler secret put SONOS_CLIENT_SECRET
+#
+# Optional override (comma-separated origins):
+#   [vars]
+#   ALLOWED_ORIGIN = "https://jigarmadia.github.io"

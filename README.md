@@ -1,43 +1,82 @@
 # sleep-song
 
-A single-page web app that plays one specific Spotify track on a Sonos speaker
-in one tap, on infinite repeat. Designed for an iPhone / Android home-screen
-icon — full-screen, dark, no browser chrome.
+A single-page web app that plays a saved Sonos Favorite on infinite repeat
+with one tap. Designed for an iPhone / Android home-screen icon —
+full-screen, dark, no browser chrome.
 
-Pure client-side. No backend. Spotify PKCE OAuth. Sonos speakers come from
-the Spotify Connect device list (the speaker just needs Spotify enabled in
-the Sonos app once).
+Talks directly to the Sonos Cloud Control API, so the speaker doesn't
+need to be an active Spotify Connect target — works even if the Sonos
+has been idle for hours.
+
+## Architecture
+
+```
+┌──────────────────────┐    ┌──────────────────────────┐    ┌──────────────┐
+│ GitHub Pages (HTML+JS)│───▶│ Cloudflare Worker        │───▶│ Sonos OAuth  │
+│ (this repo)          │    │ (holds client_secret)    │    │              │
+│                      │    │ POST /token              │    └──────────────┘
+└──────────┬───────────┘    └──────────────────────────┘
+           │
+           │ Bearer token
+           ▼
+┌──────────────────────────┐
+│ Sonos Control API        │   /v1/groups/{id}/favorites
+│ (api.ws.sonos.com)       │
+└──────────────────────────┘
+```
+
+The Cloudflare Worker is the only piece of "server" code — it exists
+solely to keep the Sonos `client_secret` out of the public browser
+bundle. It does ~3 things: validate the request, attach Basic auth,
+forward to Sonos's token endpoint.
+
+## Repo layout
+
+- [index.html](index.html), [app.js](app.js), [styles.css](styles.css) — the static site (deploys to GitHub Pages).
+- [worker/](worker/) — the Cloudflare Worker source + deploy instructions.
+- [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — auto-deploy the static site to Pages on push to `main`.
 
 ## How it works
 
 1. **Setup wizard** (first launch)
-   - Step 1: Copy the page's URL and paste it as a Redirect URI in the
-     Spotify dashboard for client `03f28a9a95cd414e8ccdad845f50dbe4`.
-   - Step 2: PKCE login.
-   - Step 3: Pick a Sonos speaker from `GET /me/player/devices`.
-2. **Main screen**: one big tap target. Tap once to play
-   `spotify:track:3HC9bA5wmZsz0wtrCIt3I6` on the saved device with
-   `repeat=track`. Tap again to pause.
-3. **Tokens** auto-refresh in the background (60 s before expiry, plus on
-   401), so the session effectively never expires until the refresh token
-   is revoked.
+   1. Register the page URL as a Redirect URI in your
+      [Sonos developer integration](https://developer.sonos.com/).
+   2. PKCE-style OAuth login (state-protected) → redirect → token
+      exchange via the Worker.
+   3. Pick the Sonos group (one or more speakers playing together).
+   4. Pick the Sonos Favorite for your sleep song.
+2. **Main screen** — one big tap target.
+   - Tap to start: `POST /v1/groups/{groupId}/favorites` with
+     `playOnCompletion: true, playModes.repeatOne: true`.
+   - Tap to pause: `POST /v1/groups/{groupId}/playback/pause`.
+3. **Tokens** auto-refresh in the background ~2 min before expiry, plus
+   on-demand when an API call returns 401.
+
+## Setup checklist (first-time install)
+
+1. **Create a Sonos integration** at <https://developer.sonos.com/> →
+   *Integrations → New Integration*. Add the Pages URL
+   (`https://jigarmadia.github.io/sleep-song/`) as a Redirect URI.
+   Copy down the **Key** and **Secret**.
+2. **Save your sleep-song track as a Sonos Favorite** in the Sonos app
+   (long-press the track → *Add to Sonos Favorites*).
+3. **Deploy the Worker**: see [worker/README.md](worker/README.md).
+   Note the Worker URL.
+4. **Plug the values into [app.js](app.js)**:
+   - `SONOS_CLIENT_ID` ← the Sonos integration's *Key*.
+   - `WORKER_URL`       ← the Worker URL from step 3.
+   The *Secret* lives only in the Worker as an encrypted env var.
+5. Push to `main`. GitHub Actions deploys to Pages automatically.
 
 ## Add to home screen
 
 iOS Safari → Share → *Add to Home Screen*. The app is tagged with
 `apple-mobile-web-app-capable` and a manifest, so it launches full-screen.
 
-## Deploy
+## Why a Cloudflare Worker?
 
-`main` → GitHub Pages, via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
-
-After the first deploy, register the resulting Pages URL as a Redirect URI
-in the Spotify dashboard (exact match, trailing slash matters).
-
-## Files
-
-- [index.html](index.html) — markup, setup wizard, main screen.
-- [styles.css](styles.css) — dark night-time aesthetic.
-- [app.js](app.js) — PKCE, token refresh, Spotify Web API calls.
-- [manifest.webmanifest](manifest.webmanifest) — PWA / home-screen metadata.
-- [icon.svg](icon.svg) — crescent-moon icon.
+Sonos's OAuth uses the classic authorization-code grant: the
+token-exchange step needs HTTP Basic auth with `client_id:client_secret`.
+There's no PKCE option that keeps it pure-client. The Worker is the
+smallest possible "server" — ~60 lines, free tier, holds the secret in
+encrypted env vars, allow-listed by origin.
