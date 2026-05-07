@@ -29,7 +29,10 @@
 
   const SONOS_SCOPES   = 'playback-control-all';
   const SONOS_AUTH_URL = 'https://api.sonos.com/login/v3/oauth';
-  const SONOS_API      = 'https://api.ws.sonos.com/control/api/v1';
+  // Sonos Control API doesn't expose CORS for browser origins, so all calls
+  // are routed through the Worker's /api proxy (which forwards the user's
+  // bearer token to api.ws.sonos.com and adds CORS headers on the way back).
+  const SONOS_API      = `${WORKER_URL}/api`;
 
   // Always derive redirect URI from the page URL so the same code works
   // for any deploy target (local file, Pages, custom domain).
