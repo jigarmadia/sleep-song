@@ -20,7 +20,7 @@
 
   // The Cloudflare Worker URL deployed from /worker. Looks like
   // https://sleep-song-token.<your-subdomain>.workers.dev
-  const WORKER_URL = '__WORKER_URL__';
+  const WORKER_URL = 'https://sleep-song-token.sleepsongjm.workers.dev';
 
   // The track we want to wake up to. Stored only in setup notes / README;
   // the actual playback target is the Sonos Favorite the user has saved
