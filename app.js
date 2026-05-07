@@ -16,7 +16,7 @@
   // ---------- Config (filled in once Sonos integration + Worker exist) ----------
   // Public Sonos integration "Key". Safe to commit. Set when you create the
   // integration at https://developer.sonos.com/.
-  const SONOS_CLIENT_ID = '__SONOS_CLIENT_ID__';
+  const SONOS_CLIENT_ID = '5cad9c10-6e18-4af8-a587-fe2203ea4c21';
 
   // The Cloudflare Worker URL deployed from /worker. Looks like
   // https://sleep-song-token.<your-subdomain>.workers.dev
