@@ -9,7 +9,9 @@ body {
     radial-gradient(900px 700px at -10% 110%, #0a2440 0%, transparent 55%),
     linear-gradient(#04050b 0%, #07091a 100%);
   background-attachment: fixed;
-  overflow: hidden;
+  /* Allow vertical scroll so the setup wizard is reachable on short phones;
+     overflow-x:hidden keeps stars / glows from causing horizontal scroll. */
+  overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
   -webkit-user-select: none;
   user-select: none;
