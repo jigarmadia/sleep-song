@@ -102,6 +102,15 @@
 
     <div class="status" id="status">tap to play</div>
 
+    <div class="volume" id="volume-row">
+      <svg class="vol-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10v4h4l5 4V6L7 10H3z" fill="currentColor"/>
+        <path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z" fill="currentColor" opacity="0.7"/>
+      </svg>
+      <input id="volume" type="range" min="0" max="100" step="1" value="30" aria-label="Volume" />
+      <span id="volume-value" class="vol-value">—</span>
+    </div>
+
     <footer class="footer">
       <button id="change-speaker"  class="link-btn" type="button">change speaker</button>
       <span class="dot">·</span>

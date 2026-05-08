@@ -68,10 +68,28 @@ forward to Sonos's token endpoint.
    The *Secret* lives only in the Worker as an encrypted env var.
 5. Push to `main`. GitHub Actions deploys to Pages automatically.
 
-## Add to home screen
+## Add to home screen (one-tap from cold)
 
-iOS Safari → Share → *Add to Home Screen*. The app is tagged with
-`apple-mobile-web-app-capable` and a manifest, so it launches full-screen.
+The manifest's `start_url` is `./?autoplay=1`, so when you launch from
+the home-screen icon the app auto-triggers playback as soon as the main
+screen renders — truly one tap from cold.
+
+- **Android (Chrome)**: open the page → `⋮` menu → *Add to Home screen*
+  / *Install app*. The icon launches full-screen, song starts ~1 s
+  later.
+- **iOS (Safari)**: Share → *Add to Home Screen*. The app is tagged
+  `apple-mobile-web-app-capable` and `apple-mobile-web-app-title=Sleep`,
+  so it opens full-screen with no Safari chrome.
+
+Open the bare URL (without `?autoplay=1`, e.g. by typing it) if you ever
+want the wizard or the static main screen without auto-playing.
+
+## Volume
+
+The main screen has a volume slider that maps to Sonos's group volume
+(`POST /v1/groups/{id}/groupVolume`). Drags are debounced and coalesced
+so dragging quickly doesn't spam the API. The slider unmutes if the
+group was muted.
 
 ## Why a Cloudflare Worker?
 

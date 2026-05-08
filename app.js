@@ -189,8 +189,14 @@
       },
     });
   }
-  async function pausePlayback(groupId) { return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/pause`); }
-  async function resumePlayback(groupId){ return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/play`); }
+  async function pausePlayback(groupId)  { return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/pause`); }
+  async function resumePlayback(groupId) { return sonos('POST', `/groups/${encodeURIComponent(groupId)}/playback/play`); }
+  async function getGroupVolume(groupId) { return sonos('GET',  `/groups/${encodeURIComponent(groupId)}/groupVolume`); }
+  async function setGroupVolume(groupId, volume) {
+    return sonos('POST', `/groups/${encodeURIComponent(groupId)}/groupVolume`, {
+      body: { volume: Math.max(0, Math.min(100, Math.round(volume))), muted: false },
+    });
+  }
 
   // ---------- Auth flow ----------
   function randomString(len = 32) {
@@ -382,6 +388,51 @@
     }
   }
 
+  // ----- Volume -----
+  function setVolumeUI(v) {
+    const slider = $('#volume');
+    const label  = $('#volume-value');
+    if (slider) {
+      slider.value = String(v);
+      slider.style.setProperty('--vol', `${v}%`);
+    }
+    if (label) label.textContent = String(v);
+  }
+
+  async function syncVolumeFromSonos() {
+    const g = loadGroup();
+    if (!g) return;
+    try {
+      const data = await getGroupVolume(g.id);
+      if (data && typeof data.volume === 'number') setVolumeUI(data.volume);
+    } catch (e) {
+      console.warn('volume sync failed:', e);
+    }
+  }
+
+  let volumeDebounce  = null;
+  let volumeInflight  = null;
+  function onVolumeInput(e) {
+    const v = Number(e.target.value);
+    setVolumeUI(v);
+    clearTimeout(volumeDebounce);
+    volumeDebounce = setTimeout(async () => {
+      const g = loadGroup();
+      if (!g) return;
+      // Coalesce: if a previous request is still in flight, wait for it,
+      // then send the latest value. Avoids API thrash while dragging.
+      try {
+        if (volumeInflight) await volumeInflight.catch(() => {});
+        volumeInflight = setGroupVolume(g.id, Number($('#volume').value));
+        await volumeInflight;
+      } catch (err) {
+        console.warn('volume set failed:', err);
+      } finally {
+        volumeInflight = null;
+      }
+    }, 120);
+  }
+
   async function play() {
     const g = loadGroup();
     const f = loadFavoriteRef();
@@ -434,7 +485,7 @@
     if (step === 4) loadFavoritesStep();
   }
 
-  function renderMain() {
+  async function renderMain() {
     hide($('#setup')); hide($('#loader'));
     show($('#main'));
     const g = loadGroup();
@@ -442,7 +493,21 @@
     $('#device-pill').textContent =
       (g ? `▸ ${g.name}` : 'no speaker') + (f ? ` · ${f.name}` : '');
     setPlayingUI(false);
-    syncStateFromSonos();
+    // Sync state + volume in parallel; both are read-only API calls.
+    await Promise.allSettled([syncStateFromSonos(), syncVolumeFromSonos()]);
+    // If launched from the home-screen icon (?autoplay=1), and we're not
+    // already playing, kick playback off so it's truly one-tap from cold.
+    if (consumeAutoplayParam() && !isPlaying) {
+      onTap();
+    }
+  }
+
+  function consumeAutoplayParam() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('autoplay') !== '1') return false;
+    url.searchParams.delete('autoplay');
+    window.history.replaceState({}, '', url.pathname + (url.search ? `?${url.searchParams}` : '') + url.hash);
+    return true;
   }
 
   function decideRoute() {
@@ -494,6 +559,7 @@
 
     // Main
     $('#tap').addEventListener('click', onTap);
+    $('#volume').addEventListener('input', onVolumeInput);
     $('#change-speaker').addEventListener('click', () => {
       localStorage.removeItem(LS.group);
       renderSetup(3);
@@ -510,7 +576,10 @@
     });
 
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && loadTokens() && loadGroup()) syncStateFromSonos();
+      if (!document.hidden && loadTokens() && loadGroup()) {
+        syncStateFromSonos();
+        syncVolumeFromSonos();
+      }
     });
   }
 
