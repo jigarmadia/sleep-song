@@ -1,0 +1,13 @@
+{
+  "name": "Sleep Song · Nest",
+  "short_name": "Sleep Nest",
+  "start_url": "./?autoplay=1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#04050b",
+  "theme_color": "#05060c",
+  "icons": [
+    { "src": "../icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

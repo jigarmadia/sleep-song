@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Sleep · Nest" />
+  <meta name="theme-color" content="#05060c" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="../icon.svg" />
+  <link rel="icon" type="image/svg+xml" href="../icon.svg" />
+  <title>Sleep Song · Nest</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <div id="stars" aria-hidden="true"></div>
+
+  <!-- ============== SETUP ============== -->
+  <main id="setup" class="screen hidden">
+    <header class="brand">
+      <div class="moon" aria-hidden="true"></div>
+      <h1>Sleep Song · Nest</h1>
+      <p class="tagline">One-tap cast to your Nest Mini</p>
+    </header>
+
+    <section class="step" data-step="1">
+      <div class="step-num">Step 1 of 1</div>
+      <h2>Audio URL</h2>
+      <p>
+        Paste an HTTPS link to the audio file you want to play (MP3, OGG, AAC,
+        or HLS stream). Anything Chrome's Cast Default Media Receiver can play.
+      </p>
+      <p class="muted">
+        Examples: a personal MP3 you've uploaded to GitHub Releases, an
+        Internet Archive public-domain lullaby, a free sleep-radio stream URL.
+        Spotify URLs won't work here — Spotify's Cast Receiver only accepts
+        sessions from Spotify's own app.
+      </p>
+      <input id="audio-url" type="url" inputmode="url" autocapitalize="off" autocorrect="off"
+             spellcheck="false" placeholder="https://example.com/sleep.mp3" />
+      <input id="audio-title" type="text" placeholder="Optional: track title (shown on cast)" />
+      <button id="save-url" class="primary-btn" type="button">Save</button>
+    </section>
+
+    <p id="setup-error" class="error hidden"></p>
+  </main>
+
+  <!-- ============== MAIN ============== -->
+  <main id="main" class="screen hidden">
+    <div class="device-pill" id="device-pill">tap to pick a Nest device</div>
+
+    <button id="tap" class="tap" type="button" aria-label="Cast and play sleep song">
+      <span class="tap-ring"></span>
+      <span class="tap-ring tap-ring-2"></span>
+      <span class="tap-core">
+        <svg id="icon-play"  class="icon"        viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5v14l11-7z" fill="currentColor"/>
+        </svg>
+        <svg id="icon-pause" class="icon hidden" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="6"  y="5" width="4" height="14" rx="1" fill="currentColor"/>
+          <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+        </svg>
+        <svg id="icon-spin"  class="icon hidden spin" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40 20" stroke-linecap="round"/>
+        </svg>
+      </span>
+    </button>
+
+    <div class="status" id="status">tap to play</div>
+
+    <div class="volume" id="volume-row">
+      <svg class="vol-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10v4h4l5 4V6L7 10H3z" fill="currentColor"/>
+        <path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z" fill="currentColor" opacity="0.7"/>
+      </svg>
+      <input id="volume" type="range" min="0" max="100" step="1" value="30" aria-label="Volume" />
+      <span id="volume-value" class="vol-value">—</span>
+    </div>
+
+    <footer class="footer">
+      <button id="change-url" class="link-btn" type="button">change track</button>
+      <span class="dot">·</span>
+      <button id="end-session" class="link-btn" type="button">stop casting</button>
+      <span class="dot">·</span>
+      <a class="link-btn" href="../">sonos</a>
+    </footer>
+
+    <p id="main-error" class="error hidden"></p>
+  </main>
+
+  <main id="loader" class="screen">
+    <div class="moon big" aria-hidden="true"></div>
+    <p class="loading">…</p>
+  </main>
+
+  <!-- Cast Web Sender SDK -->
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+  <script src="app.js"></script>
+</body>
+</html>
